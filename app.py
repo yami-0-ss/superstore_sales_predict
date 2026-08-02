@@ -11,10 +11,13 @@ MODEL_PATH = "grad_model.pkl"
 model = None
 
 if os.path.exists(MODEL_PATH):
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
+    try:
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+    except Exception as e:
+        print(f"Error loading model: {e}")
 
-# Expected features from the pickle metadata
+# Exact feature names extracted from grad_model.pkl
 FEATURE_NAMES = [
     'Ship Mode', 'Customer Name', 'Segment', 'Country', 'City', 
     'State', 'Region', 'Category', 'Sub-Category', 'Product Name', 
@@ -58,7 +61,6 @@ HTML_TEMPLATE = """
             overflow-x: hidden;
         }
 
-        /* Floating background spheres for animated depth */
         .orb {
             position: absolute;
             border-radius: 50%;
@@ -179,6 +181,16 @@ HTML_TEMPLATE = """
             animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
 
+        .error-card {
+            margin-top: 2rem;
+            padding: 1rem;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 16px;
+            color: #f87171;
+            text-align: center;
+        }
+
         @keyframes popIn {
             0% { transform: scale(0.9); opacity: 0; }
             100% { transform: scale(1); opacity: 1; }
@@ -205,7 +217,7 @@ HTML_TEMPLATE = """
     <div class="container">
         <header>
             <h1>Predictive Analytics Dashboard</h1>
-            <p>Gradient Boosting Model Deployment</p>
+            <p>Gradient Boosting Regressor Deployment</p>
         </header>
 
         <form method="POST" action="/predict" class="grid-form">
@@ -222,13 +234,19 @@ HTML_TEMPLATE = """
             </div>
             {% endfor %}
 
-            <button type="submit" class="btn-submit">Run Prediction</button>
+            <button type="submit" class="btn-submit">Calculate Prediction</button>
         </form>
 
         {% if prediction is not none %}
         <div class="result-card">
             <h3>Predicted Target Value</h3>
             <div class="prediction-val">{{ prediction }}</div>
+        </div>
+        {% endif %}
+
+        {% if error is not none %}
+        <div class="error-card">
+            <p>{{ error }}</p>
         </div>
         {% endif %}
     </div>
@@ -239,34 +257,36 @@ HTML_TEMPLATE = """
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=None)
+    return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=None, error=None)
 
 @app.route("/predict", methods=["POST"])
 def predict():
     if model is None:
-        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction="Model file not loaded.")
+        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=None, error="Model file ('grad_model.pkl') not found or invalid.")
 
     try:
-        # Collect form inputs
         data = {}
         for feature in FEATURE_NAMES:
-            val = request.form.get(feature)
+            val = request.form.get(feature, "")
+            
+            # Numeric conversion for continuous features
             if feature in ['Sales', 'Quantity', 'Discount']:
-                data[feature] = [float(val)]
+                data[feature] = [float(val) if val else 0.0]
             else:
-                # String features encoded to numeric hash for model compatibility
-                data[feature] = [abs(hash(val)) % 1000]
+                # Deterministic float hash encoding for text inputs
+                data[feature] = [float(abs(hash(str(val))) % 10000)]
 
-        input_df = pd.DataFrame(data)
+        # Ensure correct column ordering matching training data
+        input_df = pd.DataFrame(data)[FEATURE_NAMES]
         
-        # Predict
-        prediction_value = model.predict(input_df)[0]
-        formatted_prediction = f"{prediction_value:,.2f}"
+        # Predict using GradientBoostingRegressor
+        prediction_val = model.predict(input_df)[0]
+        formatted_pred = f"{float(prediction_val):,.2f}"
 
-        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=formatted_prediction)
-    
+        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=formatted_pred, error=None)
+
     except Exception as e:
-        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=f"Error: {str(e)}")
+        return render_template_string(HTML_TEMPLATE, features=FEATURE_NAMES, prediction=None, error=f"Prediction Error: {str(e)}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
